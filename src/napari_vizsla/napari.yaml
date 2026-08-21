@@ -1,0 +1,36 @@
+name: napari-vizsla
+display_name: Vizsla
+# use 'hidden' to remove plugin from napari hub search results
+visibility: public
+# see https://napari.org/stable/plugins/technical_references/manifest.html#fields for valid categories
+# categories: []
+contributions:
+  commands:
+    - id: napari-vizsla.make_container_widget
+      python_name: napari_vizsla._widget:ImageThreshold
+      title: Make threshold Container widget
+    - id: napari-vizsla.make_magic_widget
+      python_name: napari_vizsla._widget:threshold_magic_widget
+      title: Make threshold magic widget
+    - id: napari-vizsla.make_function_widget
+      python_name: napari_vizsla._widget:threshold_autogenerate_widget
+      title: Make threshold function widget
+    - id: napari-vizsla.make_qwidget
+      python_name: napari_vizsla._widget:ExampleQWidget
+      title: Make example QWidget
+  widgets:
+    - command: napari-vizsla.make_container_widget
+      display_name: Container Threshold
+    - command: napari-vizsla.make_magic_widget
+      display_name: Magic Threshold
+    - command: napari-vizsla.make_function_widget
+      autogenerate: true
+      display_name: Autogenerate Threshold
+    - command: napari-vizsla.make_qwidget
+      display_name: Example QWidget
+  menus:
+    napari/layers/segment:
+      - command: napari-vizsla.make_container_widget
+      - command: napari-vizsla.make_magic_widget
+      - command: napari-vizsla.make_function_widget
+      - command: napari-vizsla.make_qwidget
