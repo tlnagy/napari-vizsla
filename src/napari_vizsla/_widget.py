@@ -9,11 +9,29 @@ import tracksdata as td
 from magicgui.widgets import Container, FileEdit, ProgressBar, create_widget
 from napari.qt import thread_worker
 from skimage import measure
-
+from qtpy.QtCore import QObject, QRunnable, Signal
 from .utils import get_successor_tracklets
 
 if TYPE_CHECKING:
     import napari
+
+class WorkerSignals(QObject):
+    finished = Signal(dict)
+
+class LoadGraphWorker(QRunnable):
+    def __init__(self, ctcdir, graph):
+        super().__init__()
+        self.ctcdir = ctcdir
+        self._graph = graph
+        self.signals = WorkerSignals()  # Attach the signals object
+
+    def run(self):
+        # load graph
+        td.io.from_ctc(self.ctcdir, self._graph)
+        
+        # convert to napari format in background thread
+        tracks_coords, tracks_graph = td.functional.to_napari_format(self._graph, solution_key=None, allow_frame_skip=True)
+        self.signals.finished.emit({"coords": tracks_coords, "graph": tracks_graph}) 
 
 
 class Vizsla(Container):
@@ -101,19 +119,21 @@ class Vizsla(Container):
         self._ctc_progbar.min = 0
         self._ctc_progbar.max = 0
         self._ctc_progbar.value = 0
-        worker = self.load_graph_worker(ctcdir)
+        worker = LoadGraphWorker(ctcdir, self._graph)
 
-        def on_finished():
+        def on_finished(loaded_data):
             self._ctc_progbar.max = 100
             self._ctc_progbar.value = 100
             self._ctc_progbar.label = 'Graph loaded'
 
-        worker.finished.connect(on_finished)
-        worker.start()
+            if self._tracking_layer_combo.value is None:
+                trks = self._viewer.add_tracks(data=loaded_data["coords"], name='tracks', graph=loaded_data["graph"])
+                self._tracking_layer_combo.value = trks
+                self._viewer.layers.append(self._viewer.layers.pop('Vizsla'))
+                trks.refresh()
 
-    @thread_worker
-    def load_graph_worker(self, ctcdir):
-        td.io.from_ctc(ctcdir, self._graph)
+        worker.signals.finished.connect(on_finished)
+        worker.run()
 
     def display_tracks(self, shape_layer, event):
         seg_layer = self._seg_layer_combo.value
@@ -356,8 +376,8 @@ class Vizsla(Container):
         tracks_coords, tracks_graph = td.functional.to_napari_format(
             self._graph, solution_key=None, allow_frame_skip=True
         )
-        self._viewer.layers['trks'].data = tracks_coords
-        self._viewer.layers['trks'].refresh()
+        self._tracking_layer_combo.value.data = tracks_coords
+        self._tracking_layer_combo.value.refresh()
 
         shape_layer.data = []
         shape_layer.properties = {
@@ -403,8 +423,8 @@ class Vizsla(Container):
             tracks_coords, tracks_graph = td.functional.to_napari_format(
                 self._graph, solution_key=None, allow_frame_skip=True
             )
-            self._viewer.layers['trks'].data = tracks_coords
-            self._viewer.layers['trks'].refresh()
+            self._tracking_layer_combo.value.data = tracks_coords
+            self._tracking_layer_combo.value.refresh()
 
             shape_layer.data = []
             shape_layer.properties = {
