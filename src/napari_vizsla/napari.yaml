@@ -7,30 +7,11 @@ visibility: public
 contributions:
   commands:
     - id: napari-vizsla.make_container_widget
-      python_name: napari_vizsla._widget:ImageThreshold
-      title: Make threshold Container widget
-    - id: napari-vizsla.make_magic_widget
-      python_name: napari_vizsla._widget:threshold_magic_widget
-      title: Make threshold magic widget
-    - id: napari-vizsla.make_function_widget
-      python_name: napari_vizsla._widget:threshold_autogenerate_widget
-      title: Make threshold function widget
-    - id: napari-vizsla.make_qwidget
-      python_name: napari_vizsla._widget:ExampleQWidget
-      title: Make example QWidget
+      python_name: napari_vizsla._widget:Vizsla
+      title: Initialize Vizsla
   widgets:
     - command: napari-vizsla.make_container_widget
-      display_name: Container Threshold
-    - command: napari-vizsla.make_magic_widget
-      display_name: Magic Threshold
-    - command: napari-vizsla.make_function_widget
-      autogenerate: true
-      display_name: Autogenerate Threshold
-    - command: napari-vizsla.make_qwidget
-      display_name: Example QWidget
+      display_name: Manual Track Correction
   menus:
-    napari/layers/segment:
+    napari/layers/track:
       - command: napari-vizsla.make_container_widget
-      - command: napari-vizsla.make_magic_widget
-      - command: napari-vizsla.make_function_widget
-      - command: napari-vizsla.make_qwidget

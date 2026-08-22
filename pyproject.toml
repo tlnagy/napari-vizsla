@@ -33,6 +33,8 @@ dependencies = [
     "magicgui",
     "qtpy",
     "scikit-image",
+    "tracksdata",
+    "polars"
 ]
 
 [project.optional-dependencies]
