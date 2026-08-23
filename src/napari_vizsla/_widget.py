@@ -1,18 +1,27 @@
 import logging
 import warnings
 from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import polars as pl
 import tracksdata as td
-from magicgui.widgets import Container, FileEdit, ProgressBar, create_widget
-from qtpy.QtCore import QObject, QRunnable, Signal
+from magicgui.widgets import (
+    Container,
+    FileEdit,
+    ProgressBar,
+    create_widget,
+)
+from napari.qt import thread_worker
+from qtpy.QtCore import QObject, QRunnable, QTimer, Signal
+from qtpy.QtWidgets import QSizePolicy
 from skimage import measure
 
 from .utils import get_successor_tracklets
 
 PIXEL_DRAG_THRESHOLD = 3
+DEBOUNCE_TIME_MS = 2000  # 2 seconds
 
 if TYPE_CHECKING:
     import napari
@@ -82,10 +91,6 @@ class Vizsla(Container):
         )
         self._load_ctc_dir.changed.connect(self.load_graph)
 
-        self._ctc_progbar = ProgressBar(
-            value=0, max=0, visible=False, label='Loading...'
-        )
-
         self._graph = td.graph.RustWorkXGraph()
         self._polys = defaultdict(dict)
 
@@ -109,30 +114,54 @@ class Vizsla(Container):
         self._shape_layer.mouse_drag_callbacks.append(self.display_tracks)
         self._viewer.dims.events.current_step.connect(self.on_time_change)
 
-        self.extend(
+        self._auto_save_progbar = ProgressBar(
+            value=0, max=0, visible=False, label='Saving...'
+        )
+
+        top_box = Container(layout='vertical')
+        top_box.extend(
             [
                 self._seg_layer_combo,
                 self._tracking_layer_combo,
-                # self._threshold_slider,
-                # self._invert_checkbox,
                 self._load_ctc_dir,
-                self._ctc_progbar,
             ]
         )
+        self.labels = False
+        spacer = Container(layout='vertical')
+        spacer.native.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding
+        )
+        bottom_box = Container(layout='vertical')
+        self.native.setStyleSheet('border: 1px solid red;')
+        bottom_box.native.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed
+        )
+        bottom_box.extend([self._auto_save_progbar])
+
+        self.extend([top_box, spacer, bottom_box])
+
+        self.native.layout().setStretch(0, 0)  # Top doesn't stretch
+        self.native.layout().setStretch(
+            1, 1
+        )  # Spacer gets all stretch priority
+        self.native.layout().setStretch(2, 0)  # Bottom doesn't stretch
 
     def load_graph(self, ctcdir):
         if ctcdir is None:
             return
-        self._ctc_progbar.visible = True
-        self._ctc_progbar.min = 0
-        self._ctc_progbar.max = 0
-        self._ctc_progbar.value = 0
+        self._auto_save_progbar.visible = True
+        self._auto_save_progbar.min = 0
+        self._auto_save_progbar.max = 0
+        self._auto_save_progbar.value = 0
+        self._auto_save_progbar.label = 'Loading...'
+        self.native.layout().invalidate()
         worker = LoadGraphWorker(ctcdir, self._graph)
 
         def on_finished(loaded_data):
-            self._ctc_progbar.max = 100
-            self._ctc_progbar.value = 100
-            self._ctc_progbar.label = 'Graph loaded'
+            self._auto_save_progbar.max = 100
+            self._auto_save_progbar.value = 100
+            self._auto_save_progbar.visible = False
+            self.native.layout().invalidate()
 
             if self._tracking_layer_combo.value is None:
                 trks = self._viewer.add_tracks(
@@ -143,6 +172,17 @@ class Vizsla(Container):
                 self._tracking_layer_combo.value = trks
                 self._viewer.layers.append(self._viewer.layers.pop('Vizsla'))
                 trks.refresh()
+
+                # set up tracks auto-save mechanism
+                self.autosave_dir = Path(ctcdir).parent / '.vizsla_autosave'
+                self.autosave_dir.mkdir(parents=True, exist_ok=True)
+                self.current_save_worker = None
+                self.save_pending = False
+                self.debounce_timer = QTimer()
+                self.debounce_timer.setSingleShot(True)
+                self.debounce_timer.timeout.connect(self._trigger_save)
+
+                trks.events.data.connect(self.on_tracks_modified)
 
         worker.signals.finished.connect(on_finished)
         worker.run()
@@ -463,3 +503,44 @@ class Vizsla(Container):
                 'timepoint': np.array([]),
             }
             shape_layer.editable = False
+
+    def on_tracks_modified(self, event):
+        """Triggered every time the user edits the tracks layer."""
+        self.debounce_timer.start(DEBOUNCE_TIME_MS)
+
+    def _trigger_save(self):
+        """Trigger the save operation after the debounce time has passed."""
+        if self.current_save_worker is not None:
+            self.save_pending = True
+            return
+
+        self._auto_save_progbar.visible = True
+        self._auto_save_progbar.min = 0
+        self._auto_save_progbar.max = 0
+        self._auto_save_progbar.value = 0
+        self._auto_save_progbar.label = 'Saving...'
+        self.native.layout().invalidate()
+        graph_snapshot = self._graph.copy()
+
+        def on_save_complete():
+            self.current_worker = None
+
+            self._auto_save_progbar.max = 100
+            self._auto_save_progbar.value = 100
+            self._auto_save_progbar.label = 'Save complete'
+            self._auto_save_progbar.visible = False
+            self.native.layout().invalidate()
+            # If edits happened while we were saving, trigger a new save with the latest data
+            if self.save_pending:
+                self.save_pending = False
+                self._trigger_save()
+
+        # Start the background worker
+        self.current_worker = self.background_saver(graph_snapshot)
+        self.current_worker.finished.connect(on_save_complete)
+        self.current_worker.start()
+
+    @thread_worker
+    def background_saver(self, graph_snapshot):
+        """Runs in the background thread."""
+        graph_snapshot.to_ctc(self.autosave_dir, overwrite=True)
