@@ -96,6 +96,14 @@ class Vizsla(Container):
         )
         self._load_ctc_dir.changed.connect(self.load_graph)
 
+        self._autosave_dir_selector = FileEdit(
+            label='Autosave Folder',
+            mode='d',
+            value=None,
+            tooltip='Autosave to this directory. Overwrites contents.',
+        )
+        self._autosave_dir_selector.changed.connect(self.update_autosave_dir)
+
         self._graph = td.graph.RustWorkXGraph()
         self._polys = defaultdict(dict)
 
@@ -146,6 +154,7 @@ class Vizsla(Container):
                 self._seg_layer_combo,
                 self._tracking_layer_combo,
                 self._load_ctc_dir,
+                self._autosave_dir_selector,
                 button_box,
             ]
         )
@@ -202,6 +211,7 @@ class Vizsla(Container):
 
                 # set up tracks auto-save mechanism
                 self.autosave_dir = Path(ctcdir).parent / '.vizsla_autosave'
+                self._autosave_dir_selector.value = self.autosave_dir
                 self.autosave_dir.mkdir(parents=True, exist_ok=True)
                 self.current_save_worker = None
                 self.save_pending = False
@@ -548,6 +558,9 @@ class Vizsla(Container):
                 'timepoint': np.array([]),
             }
             shape_layer.editable = False
+
+    def update_autosave_dir(self, event):
+        self.autosave_dir = self._autosave_dir_selector.value
 
     def on_tracks_modified(self, event):
         """Triggered every time the user edits the tracks layer."""
