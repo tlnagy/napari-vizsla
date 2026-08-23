@@ -10,6 +10,7 @@ import tracksdata as td
 from magicgui.widgets import (
     Container,
     FileEdit,
+    Image,
     ProgressBar,
     create_widget,
 )
@@ -17,6 +18,7 @@ from napari.qt import thread_worker
 from qtpy.QtCore import QObject, QRunnable, QTimer, Signal
 from qtpy.QtWidgets import QSizePolicy
 from skimage import measure
+from skimage.io import imread
 
 from .utils import get_successor_tracklets
 
@@ -58,7 +60,6 @@ class Vizsla(Container):
 
         logging.getLogger('tracksdata.utils._logging').setLevel(logging.ERROR)
 
-        # use create_widget to generate widgets from type annotations
         default_seg_layer = next(
             (
                 layer
@@ -118,6 +119,11 @@ class Vizsla(Container):
             value=0, max=0, visible=False, label='Saving...'
         )
 
+        logo = Image(value=imread('assets/vizsla.png'))
+        # logo.native.setScaledContents(True)
+        logo.native.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+        logo.native.setMaximumHeight(100)
+        logo.native.setMaximumWidth(300)
         top_box = Container(layout='vertical')
         top_box.extend(
             [
@@ -132,19 +138,21 @@ class Vizsla(Container):
             QSizePolicy.Expanding, QSizePolicy.Expanding
         )
         bottom_box = Container(layout='vertical')
-        self.native.setStyleSheet('border: 1px solid red;')
+        # self.native.setStyleSheet('border: 1px solid red;')
         bottom_box.native.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Fixed
         )
         bottom_box.extend([self._auto_save_progbar])
 
-        self.extend([top_box, spacer, bottom_box])
+        self.extend([logo, top_box, spacer, bottom_box])
+        # self.extend([logo])
 
         self.native.layout().setStretch(0, 0)  # Top doesn't stretch
+        self.native.layout().setStretch(1, 0)
         self.native.layout().setStretch(
-            1, 1
+            2, 1
         )  # Spacer gets all stretch priority
-        self.native.layout().setStretch(2, 0)  # Bottom doesn't stretch
+        self.native.layout().setStretch(3, 0)  # Bottom doesn't stretch
 
     def load_graph(self, ctcdir):
         if ctcdir is None:
