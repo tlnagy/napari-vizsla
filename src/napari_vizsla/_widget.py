@@ -88,7 +88,10 @@ class Vizsla(Container):
         )
 
         self._load_ctc_dir = FileEdit(
-            label='Load CTC Directory', mode='d', value=None
+            label='CTC folder',
+            mode='d',
+            value=None,
+            tooltip='Load a CTC folder to visualize and edit tracking data',
         )
         self._load_ctc_dir.changed.connect(self.load_graph)
 
@@ -154,6 +157,8 @@ class Vizsla(Container):
         )  # Spacer gets all stretch priority
         self.native.layout().setStretch(3, 0)  # Bottom doesn't stretch
 
+        self.native.setMaximumWidth(self.native.minimumSizeHint().width())
+
     def load_graph(self, ctcdir):
         if ctcdir is None:
             return
@@ -218,6 +223,13 @@ class Vizsla(Container):
             return
 
         seg_layer = self._seg_layer_combo.value
+
+        if self._graph.num_nodes() == 0:
+            warnings.warn(
+                'No graph loaded. Please load a CTC directory first.',
+                stacklevel=2,
+            )
+            return
 
         label = seg_layer.get_value(event.position)
 
