@@ -245,6 +245,7 @@ class Vizsla(Container):
                 'tracklet_id': np.array([]),
             }
             shape_layer.editable = False
+            self._polys.clear()
             return
 
         tidx = int(event.position[-3])
