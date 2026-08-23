@@ -370,6 +370,12 @@ class Vizsla(Container):
 
     def on_time_change(self, event):
         shape_layer = self._shape_layer
+        if len(self._viewer.dims.current_step) < 3:
+            warnings.warn(
+                'Vizsla requires a 3D or higher dimension image to function.',
+                stacklevel=2,
+            )
+            return
         tidx = self._viewer.dims.current_step[-3]
         seg_layer = self._seg_layer_combo.value
 
@@ -381,9 +387,13 @@ class Vizsla(Container):
                 if trkid in self._polys and tidx in self._polys[trkid]:
                     shape_data[i] = self._polys[trkid][tidx]
                     # update the polygon label with actual label info from the segmentation image
+                    seg_layer_visible = seg_layer.visible
+                    if not seg_layer_visible:
+                        seg_layer.visible = True
                     label = seg_layer.get_value(
                         [tidx] + np.mean(shape_data[i], axis=0).tolist()
                     )
+                    seg_layer.visible = seg_layer_visible
                     shape_layer.features.loc[i, 'timepoint'] = tidx
                     shape_layer.features.loc[i, 'label'] = label
                 # c = df.loc[i, "edge_color"]
