@@ -118,6 +118,9 @@ class Vizsla(Container):
         self._shape_layer.mouse_drag_callbacks.append(self.display_tracks)
         self._viewer.dims.events.current_step.connect(self.on_time_change)
 
+        self._viewer.layers.events.inserted.connect(self.on_layer_inserted)
+        self._viewer.layers.events.moved.connect(self.on_layer_moved)
+
         self._auto_save_progbar = ProgressBar(
             value=0, max=0, visible=False, label='Saving...'
         )
@@ -564,3 +567,47 @@ class Vizsla(Container):
     def background_saver(self, graph_snapshot):
         """Runs in the background thread."""
         graph_snapshot.to_ctc(self.autosave_dir, overwrite=True)
+
+    def on_layer_inserted(self, event):
+        """
+        Update the segmentation or tracking layer selection when layers are inserted
+        """
+        if self._seg_layer_combo.value is None and isinstance(
+            event.value, self._seg_layer_combo.annotation
+        ):
+            print('Updating segmentation layer selection')
+            self._seg_layer_combo.choices = list(self._viewer.layers)
+            self._seg_layer_combo.value = event.value
+
+        elif self._tracking_layer_combo.value is None and isinstance(
+            event.value, self._tracking_layer_combo.annotation
+        ):
+            self._tracking_layer_combo.choices = list(self._viewer.layers)
+            self._tracking_layer_combo.value = event.value
+
+        # make sure to keep the Vizsla layer on top of the stack and selected
+        if event.value.name != 'Vizsla':
+            self._viewer.layers.append(self._viewer.layers.pop('Vizsla'))
+            QTimer.singleShot(
+                0,
+                lambda: setattr(
+                    self._viewer.layers.selection,
+                    'active',
+                    self._viewer.layers['Vizsla'],
+                ),
+            )
+
+    def on_layer_moved(self, event):
+        """
+        Ensure the Vizsla layer remains on top of the stack when layers are moved.
+        """
+        if event.value.name != 'Vizsla':
+            self._viewer.layers.append(self._viewer.layers.pop('Vizsla'))
+            QTimer.singleShot(
+                0,
+                lambda: setattr(
+                    self._viewer.layers.selection,
+                    'active',
+                    self._viewer.layers['Vizsla'],
+                ),
+            )
