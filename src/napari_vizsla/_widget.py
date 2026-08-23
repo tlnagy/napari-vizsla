@@ -12,6 +12,7 @@ from magicgui.widgets import (
     FileEdit,
     Image,
     ProgressBar,
+    PushButton,
     create_widget,
 )
 from napari.qt import thread_worker
@@ -126,16 +127,26 @@ class Vizsla(Container):
         )
 
         logo = Image(value=imread('assets/vizsla.png'))
-        # logo.native.setScaledContents(True)
         logo.native.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
         logo.native.setMaximumHeight(100)
         logo.native.setMaximumWidth(300)
+        button_box = Container(layout='horizontal', labels=False, label='')
+        link_button = PushButton(
+            text='Link (l)', tooltip='Link selected tracks'
+        )
+        break_button = PushButton(
+            text='Break (b)', tooltip='Break selected track'
+        )
+        link_button.clicked.connect(self.link)
+        break_button.clicked.connect(self.break_track)
+        button_box.extend([link_button, break_button])
         top_box = Container(layout='vertical')
         top_box.extend(
             [
                 self._seg_layer_combo,
                 self._tracking_layer_combo,
                 self._load_ctc_dir,
+                button_box,
             ]
         )
         self.labels = False

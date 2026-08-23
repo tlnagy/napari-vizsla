@@ -9,6 +9,8 @@
 [![npe2](https://img.shields.io/badge/plugin-npe2-blue?link=https://napari.org/stable/plugins/index.html)](https://napari.org/stable/plugins/index.html)
 [![Copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-purple.json)](https://github.com/copier-org/copier)
 
+<img src="assets/vizsla.png" width="500"/>
+
 Your friendly tracking assistant. Sniff out and fix broken tracks.
 
 ----------------------------------
