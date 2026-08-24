@@ -1,66 +1,93 @@
-import numpy as np
+import pytest
+import tracksdata as td
 
-from napari_vizsla._widget import (
-    ExampleQWidget,
-    ImageThreshold,
-    threshold_autogenerate_widget,
-    threshold_magic_widget,
-)
+from napari_vizsla._widget import Vizsla
 
 
-def test_threshold_autogenerate_widget():
-    # because our 'widget' is a pure function, we can call it and
-    # test it independently of napari
-    im_data = np.random.random((100, 100))
-    thresholded = threshold_autogenerate_widget(im_data, 0.5)
-    assert thresholded.shape == im_data.shape
-    # etc.
+class FakeEvent:
+    def __init__(self, position, event_type='mouse_move'):
+        self.position = position
+        self.type = event_type
 
 
-# make_napari_viewer is a pytest fixture that returns a napari viewer object
-# you don't need to import it, as long as napari is installed
-# in your testing environment
-def test_threshold_magic_widget(make_napari_viewer):
+@pytest.fixture
+def load_vizsla(make_napari_viewer):
     viewer = make_napari_viewer()
-    layer = viewer.add_image(np.random.random((100, 100)))
+    v = Vizsla(viewer)
+    viewer.window.add_dock_widget(v)
+    viewer.open('tests/example_tracks', stack=True)
 
-    # our widget will be a MagicFactory or FunctionGui instance
-    my_widget = threshold_magic_widget()
-
-    # if we 'call' this object, it'll execute our function
-    thresholded = my_widget(viewer.layers[0], 0.5)
-    assert thresholded.shape == layer.data.shape
-    # etc.
+    return v, viewer
 
 
-def test_image_threshold_widget(make_napari_viewer):
-    viewer = make_napari_viewer()
-    layer = viewer.add_image(np.random.random((100, 100)))
-    my_widget = ImageThreshold(viewer)
-
-    # because we saved our widgets as attributes of the container
-    # we can set their values without having to 'interact' with the viewer
-    my_widget._image_layer_combo.value = layer
-    my_widget._threshold_slider.value = 0.5
-
-    # this allows us to run our functions directly and ensure
-    # correct results
-    my_widget._threshold_im()
-    assert len(viewer.layers) == 2
+@pytest.fixture
+def load_vizsla_w_graph(load_vizsla):
+    v, viewer = load_vizsla
+    v._load_ctc_dir.value = 'tests/example_tracks/'
+    return v, viewer
 
 
-# capsys is a pytest fixture that captures stdout and stderr output streams
-def test_example_q_widget(make_napari_viewer, capsys):
-    # make viewer and add an image layer using our fixture
-    viewer = make_napari_viewer()
-    viewer.add_image(np.random.random((100, 100)))
+def test_vizsla_layer_on_top(load_vizsla):
+    v, viewer = load_vizsla
 
-    # create our widget, passing in the viewer
-    my_widget = ExampleQWidget(viewer)
+    # Check if Vizsla layer is still on top
+    assert viewer.layers[-1].name == 'Vizsla'
 
-    # call our widget method
-    my_widget._on_click()
 
-    # read captured output and check that it's as we expected
-    captured = capsys.readouterr()
-    assert captured.out == 'napari has 1 layers\n'
+def test_vizsla_graph_update(load_vizsla_w_graph):
+    v, viewer = load_vizsla_w_graph
+
+    assert v._graph.num_nodes() == 4335
+
+
+def simulate_click(viewer, v, position):
+    viewer.dims.current_step = (position[-3], 0, 0)
+    event = FakeEvent(position=position)
+    gen = v.display_tracks(v._shape_layer, event)
+
+    next(gen)
+    next(gen)
+    event.type = 'mouse_release'
+
+    with pytest.raises(StopIteration):
+        next(gen)
+
+
+def test_vizsla_mouse_click_highlight(load_vizsla_w_graph):
+    v, viewer = load_vizsla_w_graph
+
+    simulate_click(viewer, v, (7, 1111, 2648))
+
+    assert 'polygon' in v._shape_layer.shape_type
+
+
+def test_vizsla_link(load_vizsla_w_graph):
+    v, viewer = load_vizsla_w_graph
+
+    # click on first label
+    simulate_click(viewer, v, (20, 761, 2759))
+
+    # click on second label
+    simulate_click(viewer, v, (21, 726, 2627))
+
+    # link labels
+    v.link()
+
+    assert (
+        len(v._graph.filter(td.NodeAttr('tracklet_id') == 97).node_ids()) == 30
+    )
+
+    # make sure everything is cleared
+    assert 'polygon' not in v._shape_layer.shape_type
+
+
+def test_vizsla_break(load_vizsla_w_graph):
+    v, viewer = load_vizsla_w_graph
+
+    simulate_click(viewer, v, (7, 1111, 2648))
+
+    v.break_track()
+
+    assert (
+        len(v._graph.filter(td.NodeAttr('tracklet_id') == 97).node_ids()) == 8
+    )

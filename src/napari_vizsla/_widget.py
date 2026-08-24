@@ -565,7 +565,12 @@ class Vizsla(Container):
             self.save_pending = True
             return
 
-        self._auto_save_progbar.visible = True
+        try:
+            self._auto_save_progbar.visible = True
+        except RuntimeError as e:
+            if 'wrapped C/C++ object' in str(e):
+                return  # Vizsla was already closed/deleted, exit cleanly
+            raise
         self._auto_save_progbar.min = 0
         self._auto_save_progbar.max = 0
         self._auto_save_progbar.value = 0
@@ -574,7 +579,7 @@ class Vizsla(Container):
         graph_snapshot = self._graph.copy()
 
         def on_save_complete():
-            self.current_worker = None
+            self.current_save_worker = None
 
             self._auto_save_progbar.max = 100
             self._auto_save_progbar.value = 100
@@ -587,9 +592,9 @@ class Vizsla(Container):
                 self._trigger_save()
 
         # Start the background worker
-        self.current_worker = self.background_saver(graph_snapshot)
-        self.current_worker.finished.connect(on_save_complete)
-        self.current_worker.start()
+        self.current_save_worker = self.background_saver(graph_snapshot)
+        self.current_save_worker.finished.connect(on_save_complete)
+        self.current_save_worker.start()
 
     @thread_worker
     def background_saver(self, graph_snapshot):
