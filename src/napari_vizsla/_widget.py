@@ -519,7 +519,7 @@ class Vizsla(Container):
         labels = shape_layer.features['label'][selected].to_numpy()
 
         if len(selected) > 3:
-            warnings.warn('4 way links are not supported!', stacklevel=2)
+            warnings.warn('>3 way links are not supported!', stacklevel=2)
             return
         if len(np.unique(timepoints)) < 2:
             warnings.warn('Cannot link within same timepoint!', stacklevel=2)

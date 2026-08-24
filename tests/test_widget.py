@@ -94,3 +94,13 @@ def test_vizsla_break(load_vizsla_w_graph):
     assert (
         len(v._graph.filter(td.NodeAttr('tracklet_id') == 97).node_ids()) == 8
     )
+
+
+def test_vizsla_link_same_timepoint(load_vizsla_w_graph):
+    v, viewer = load_vizsla_w_graph
+
+    simulate_click(viewer, v, (7, 1111, 2648))
+    simulate_click(viewer, v, (7, 1168, 2756))
+
+    with pytest.warns(UserWarning, match='Cannot link within same timepoint!'):
+        v.link(viewer)
