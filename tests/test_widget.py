@@ -21,9 +21,12 @@ def load_vizsla(make_napari_viewer):
 
 
 @pytest.fixture
-def load_vizsla_w_graph(load_vizsla):
+def load_vizsla_w_graph(load_vizsla, qtbot):
     v, viewer = load_vizsla
     v._load_ctc_dir.value = 'tests/example_tracks/'
+
+    with qtbot.waitSignal(v._load_graph_worker.finished, raising=False):
+        pass
     return v, viewer
 
 
@@ -71,7 +74,7 @@ def test_vizsla_link(load_vizsla_w_graph):
     simulate_click(viewer, v, (21, 726, 2627))
 
     # link labels
-    v.link()
+    v.link(viewer)
 
     assert (
         len(v._graph.filter(td.NodeAttr('tracklet_id') == 97).node_ids()) == 30
@@ -86,7 +89,7 @@ def test_vizsla_break(load_vizsla_w_graph):
 
     simulate_click(viewer, v, (7, 1111, 2648))
 
-    v.break_track()
+    v.break_track(viewer)
 
     assert (
         len(v._graph.filter(td.NodeAttr('tracklet_id') == 97).node_ids()) == 8

@@ -16,7 +16,7 @@ from magicgui.widgets import (
     create_widget,
 )
 from napari.qt import thread_worker
-from qtpy.QtCore import QObject, QRunnable, QTimer, Signal
+from qtpy.QtCore import QTimer
 from qtpy.QtWidgets import QSizePolicy
 from skimage import measure
 from skimage.io import imread
@@ -28,30 +28,6 @@ DEBOUNCE_TIME_MS = 2000  # 2 seconds
 
 if TYPE_CHECKING:
     import napari
-
-
-class WorkerSignals(QObject):
-    finished = Signal(dict)
-
-
-class LoadGraphWorker(QRunnable):
-    def __init__(self, ctcdir, graph):
-        super().__init__()
-        self.ctcdir = ctcdir
-        self._graph = graph
-        self.signals = WorkerSignals()  # Attach the signals object
-
-    def run(self):
-        # load graph
-        td.io.from_ctc(self.ctcdir, self._graph)
-
-        # convert to napari format in background thread
-        tracks_coords, tracks_graph = td.functional.to_napari_format(
-            self._graph, solution_key=None, allow_frame_skip=True
-        )
-        self.signals.finished.emit(
-            {'coords': tracks_coords, 'graph': tracks_graph}
-        )
 
 
 class Vizsla(Container):
@@ -104,8 +80,8 @@ class Vizsla(Container):
         )
         self._autosave_dir_selector.changed.connect(self.update_autosave_dir)
 
-        self._graph = td.graph.RustWorkXGraph()
         self._polys = defaultdict(dict)
+        self._graph = None
 
         self._shape_layer = viewer.add_shapes(
             name='Vizsla',
@@ -182,6 +158,21 @@ class Vizsla(Container):
 
         self.native.setMaximumWidth(self.native.minimumSizeHint().width())
 
+    @thread_worker
+    def graph_loader(self, ctcdir, create_layer=True):
+        graph = td.graph.RustWorkXGraph()
+        td.io.from_ctc(ctcdir, graph)
+
+        if create_layer:
+            # convert to napari format in background thread
+            tracks_coords, tracks_graph = td.functional.to_napari_format(
+                graph, solution_key=None, allow_frame_skip=True
+            )
+
+            return graph, tracks_coords, tracks_graph
+        else:
+            return graph
+
     def load_graph(self, ctcdir):
         if ctcdir is None:
             return
@@ -191,38 +182,47 @@ class Vizsla(Container):
         self._auto_save_progbar.value = 0
         self._auto_save_progbar.label = 'Loading...'
         self.native.layout().invalidate()
-        worker = LoadGraphWorker(ctcdir, self._graph)
+        create_layer = self._tracking_layer_combo.value is None
+        self._load_graph_worker = self.graph_loader(
+            ctcdir, create_layer=create_layer
+        )
 
-        def on_finished(loaded_data):
+        def on_finished(res):
             self._auto_save_progbar.max = 100
             self._auto_save_progbar.value = 100
             self._auto_save_progbar.visible = False
             self.native.layout().invalidate()
 
-            if self._tracking_layer_combo.value is None:
+            if create_layer:
+                graph, tracks_coords, tracks_graph = res
+                self._graph = graph
                 trks = self._viewer.add_tracks(
-                    data=loaded_data['coords'],
+                    data=tracks_coords,
                     name='tracks',
-                    graph=loaded_data['graph'],
+                    graph=tracks_graph,
                 )
                 self._tracking_layer_combo.value = trks
                 self._viewer.layers.append(self._viewer.layers.pop('Vizsla'))
                 trks.refresh()
+            else:
+                self._graph = res
 
-                # set up tracks auto-save mechanism
-                self.autosave_dir = Path(ctcdir).parent / '.vizsla_autosave'
-                self._autosave_dir_selector.value = self.autosave_dir
-                self.autosave_dir.mkdir(parents=True, exist_ok=True)
-                self.current_save_worker = None
-                self.save_pending = False
-                self.debounce_timer = QTimer()
-                self.debounce_timer.setSingleShot(True)
-                self.debounce_timer.timeout.connect(self._trigger_save)
+            # set up tracks auto-save mechanism
+            self.autosave_dir = Path(ctcdir).parent / '.vizsla_autosave'
+            self._autosave_dir_selector.value = self.autosave_dir
+            self.autosave_dir.mkdir(parents=True, exist_ok=True)
+            self.current_save_worker = None
+            self.save_pending = False
+            self.debounce_timer = QTimer()
+            self.debounce_timer.setSingleShot(True)
+            self.debounce_timer.timeout.connect(self._trigger_save)
 
-                trks.events.data.connect(self.on_tracks_modified)
+            self._tracking_layer_combo.value.events.data.connect(
+                self.on_tracks_modified
+            )
 
-        worker.signals.finished.connect(on_finished)
-        worker.run()
+        self._load_graph_worker.returned.connect(on_finished)
+        self._load_graph_worker.start()
 
     def display_tracks(self, shape_layer, event):
         """
@@ -248,7 +248,7 @@ class Vizsla(Container):
 
         seg_layer = self._seg_layer_combo.value
 
-        if self._graph.num_nodes() == 0:
+        if self._graph is None:
             warnings.warn(
                 'No graph loaded. Please load a CTC directory first.',
                 stacklevel=2,
@@ -442,19 +442,19 @@ class Vizsla(Container):
         shape_layer.editable = False
         shape_layer.refresh()
 
-    def hide_seg_layer(self):
+    def hide_seg_layer(self, viewer):
         if self._seg_layer_combo.value is not None:
             self._seg_layer_combo.value.visible = (
                 not self._seg_layer_combo.value.visible
             )
 
-    def hide_track_layer(self):
+    def hide_track_layer(self, viewer):
         if self._tracking_layer_combo.value is not None:
             self._tracking_layer_combo.value.visible = (
                 not self._tracking_layer_combo.value.visible
             )
 
-    def hide_polys(self):
+    def hide_polys(self, viewer):
         shape_layer = self._shape_layer
         for i in range(shape_layer.nshapes):
             if shape_layer.shape_type[i] == 'polygon':
@@ -486,7 +486,7 @@ class Vizsla(Container):
         self._shape_layer.editable = False
         self._polys.clear()
 
-    def break_track(self):
+    def break_track(self, viewer):
         shape_layer = self._shape_layer
         selected = [
             i for (i, p) in enumerate(shape_layer.shape_type) if p == 'polygon'
@@ -510,7 +510,7 @@ class Vizsla(Container):
 
         self._reset_shape_layer()
 
-    def link(self):
+    def link(self, viewer):
         shape_layer = self._shape_layer
         selected = [
             i for (i, p) in enumerate(shape_layer.shape_type) if p == 'polygon'
