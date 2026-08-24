@@ -259,14 +259,7 @@ class Vizsla(Container):
 
         # clear Vizsla layer if background is clicked
         if label is None or label == 0:
-            shape_layer.data = []
-            shape_layer.properties = {
-                'label': np.array([]),
-                'timepoint': np.array([]),
-                'tracklet_id': np.array([]),
-            }
-            shape_layer.editable = False
-            self._polys.clear()
+            self._reset_shape_layer()
             return
 
         tidx = int(event.position[-3])
@@ -378,7 +371,7 @@ class Vizsla(Container):
                 edge_width=4,
             )
 
-    def on_time_change(self, event):
+    def on_time_change(self):
         shape_layer = self._shape_layer
         if len(self._viewer.dims.current_step) < 3:
             warnings.warn(
@@ -449,19 +442,19 @@ class Vizsla(Container):
         shape_layer.editable = False
         shape_layer.refresh()
 
-    def hide_seg_layer(self, v):
+    def hide_seg_layer(self):
         if self._seg_layer_combo.value is not None:
             self._seg_layer_combo.value.visible = (
                 not self._seg_layer_combo.value.visible
             )
 
-    def hide_track_layer(self, v):
+    def hide_track_layer(self):
         if self._tracking_layer_combo.value is not None:
             self._tracking_layer_combo.value.visible = (
                 not self._tracking_layer_combo.value.visible
             )
 
-    def hide_polys(self, v):
+    def hide_polys(self):
         shape_layer = self._shape_layer
         for i in range(shape_layer.nshapes):
             if shape_layer.shape_type[i] == 'polygon':
@@ -483,7 +476,17 @@ class Vizsla(Container):
                 shape_layer.current_edge_color = c
                 shape_layer.selected_data = {}
 
-    def break_track(self, v):
+    def _reset_shape_layer(self):
+        self._shape_layer.data = []
+        self._shape_layer.properties = {
+            'label': np.array([]),
+            'timepoint': np.array([]),
+            'tracklet_id': np.array([]),
+        }
+        self._shape_layer.editable = False
+        self._polys.clear()
+
+    def break_track(self):
         shape_layer = self._shape_layer
         selected = [
             i for (i, p) in enumerate(shape_layer.shape_type) if p == 'polygon'
@@ -505,14 +508,9 @@ class Vizsla(Container):
         self._tracking_layer_combo.value.data = tracks_coords
         self._tracking_layer_combo.value.refresh()
 
-        shape_layer.data = []
-        shape_layer.properties = {
-            'label': np.array([]),
-            'timepoint': np.array([]),
-        }
-        shape_layer.editable = False
+        self._reset_shape_layer()
 
-    def link(self, v):
+    def link(self):
         shape_layer = self._shape_layer
         selected = [
             i for (i, p) in enumerate(shape_layer.shape_type) if p == 'polygon'
@@ -552,17 +550,12 @@ class Vizsla(Container):
             self._tracking_layer_combo.value.data = tracks_coords
             self._tracking_layer_combo.value.refresh()
 
-            shape_layer.data = []
-            shape_layer.properties = {
-                'label': np.array([]),
-                'timepoint': np.array([]),
-            }
-            shape_layer.editable = False
+            self._reset_shape_layer()
 
-    def update_autosave_dir(self, event):
+    def update_autosave_dir(self):
         self.autosave_dir = self._autosave_dir_selector.value
 
-    def on_tracks_modified(self, event):
+    def on_tracks_modified(self):
         """Triggered every time the user edits the tracks layer."""
         self.debounce_timer.start(DEBOUNCE_TIME_MS)
 
