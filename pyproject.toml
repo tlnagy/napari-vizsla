@@ -33,7 +33,7 @@ dependencies = [
     "magicgui",
     "qtpy",
     "scikit-image",
-    "tracksdata",
+    "tracksdata @ git+https://github.com/royerlab/tracksdata@b7540e2",
     "polars"
 ]
 
