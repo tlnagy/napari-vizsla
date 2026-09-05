@@ -25,7 +25,7 @@ def load_vizsla_w_graph(load_vizsla, qtbot):
     v, viewer = load_vizsla
     v._load_ctc_dir.value = 'tests/example_tracks/'
 
-    with qtbot.waitSignal(v._load_graph_worker.finished, raising=False):
+    with qtbot.waitSignal(v._load_graph_worker.finished, timeout=30000): # wait up to 30s
         pass
     return v, viewer
 
