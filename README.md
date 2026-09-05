@@ -9,21 +9,29 @@
 [![npe2](https://img.shields.io/badge/plugin-npe2-blue?link=https://napari.org/stable/plugins/index.html)](https://napari.org/stable/plugins/index.html)
 [![Copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-purple.json)](https://github.com/copier-org/copier)
 
-<img src="https://github.com/tlnagy/napari-vizsla/blob/a7305fcf9bed6e43c54916019a096752f4da870d/assets/vizsla.png" width="500"/>
+<img src="https://raw.githubusercontent.com/tlnagy/napari-vizsla/a7305fcf9bed6e43c54916019a096752f4da870d/assets/vizsla.png" width="500"/>
 
 Your friendly tracking assistant. Sniff out and fix broken tracks.
 
 ----------------------------------
 
-This [napari] plugin was generated with [copier] using the [napari-plugin-template] (None).
+There are many fantastic tracking libraries out there (e.g. Trackastra, Ultrack, etc) but in my experience they only get ~90% of tracks right from one frame to the next...over a long movie that's a lot of broken tracks! 
 
-<!--
-Don't miss the full getting started guide to set up your new package:
-https://github.com/napari/napari-plugin-template#getting-started
+`napari-vizsla`'s goal is to help you quickly fix these broken tracks. Load your tracks using the Cell-Tracking-Challenge (CTC) format (which many tracking programs can output) and get fixing!
 
-and review the napari docs for plugin developers:
-https://napari.org/stable/plugins/index.html
--->
+https://github.com/user-attachments/assets/07aa9885-f69d-4f8c-a1e6-9e69f6b1b936
+
+## Usage
+
+`napari-vizsla` mostly consists of a set of shortcuts to quickly modify and update tracks. It will autosave your changes as you go!
+
+| Keyboard Shortcut | Action                                                                                      |
+|-------------------|---------------------------------------------------------------------------------------------|
+| `l`               | (l)ink tracks. Select two cells, in two different timepoints, and link them into one track. |
+| `b`               | (b)reak track. This breaks the track into two tracklets at the given time point.            |
+| `h`               | (h)ide overlay. Hides Vizsla overlay.                                                       |
+| `t`               | hide (t)racks. Hides the track layer.                                                       |
+| `s`               | hide (s)egmentation layer. Helpful to better see the underlying signal layer.               |
 
 ## Installation
 
