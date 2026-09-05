@@ -79,6 +79,7 @@ jobs:
     # github secrets (see readme for details)
     needs: [test, build-and-inspect-package]
     runs-on: ubuntu-latest
+    environment: release # run in special release environment
     if: contains(github.ref, 'tags')
     permissions:
       id-token: write
