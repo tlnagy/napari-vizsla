@@ -1,6 +1,7 @@
 import logging
 import warnings
 from collections import defaultdict
+from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,10 +23,8 @@ from skimage import measure
 from skimage.io import imread
 
 from .utils import get_successor_tracklets
-from importlib import resources
 
 PIXEL_DRAG_THRESHOLD = 3
-DEBOUNCE_TIME_MS = 2000  # 2 seconds
 
 if TYPE_CHECKING:
     import napari
@@ -111,7 +110,9 @@ class Vizsla(Container):
             value=0, max=0, visible=False, label='Saving...'
         )
 
-        logopath = resources.files("napari_vizsla.assets").joinpath("vizsla.png")
+        logopath = resources.files('napari_vizsla.assets').joinpath(
+            'vizsla.png'
+        )
         with resources.as_file(logopath) as path:
             logo = Image(value=imread(path))
         logo.native.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
@@ -560,7 +561,7 @@ class Vizsla(Container):
 
     def on_tracks_modified(self):
         """Triggered every time the user edits the tracks layer."""
-        self.debounce_timer.start(DEBOUNCE_TIME_MS)
+        self.debounce_timer.start(self.get_autosave_freq() * 1000)
 
     def _trigger_save(self):
         """Trigger the save operation after the debounce time has passed."""
@@ -647,3 +648,11 @@ class Vizsla(Container):
                     self._viewer.layers['Vizsla'],
                 ),
             )
+
+    def get_autosave_freq(self) -> float:
+        try:
+            from napari.settings import get_plugin_settings
+
+            return get_plugin_settings('napari-vizsla').autosave.autosave_freq
+        except ImportError:
+            return 300

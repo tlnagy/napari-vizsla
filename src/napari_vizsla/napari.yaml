@@ -15,3 +15,15 @@ contributions:
   menus:
     napari/layers/track:
       - command: napari-vizsla.make_container_widget
+  configurations:
+    autosave:
+      title: Autosave settings
+      properties:
+        autosave_freq:
+          title: Autosave Frequency
+          type: integer
+          description: How long to wait after editing before autosaving (in seconds)
+          minimum: 1
+          default: 300 # every 5 minutes
+          maximum: 86400 # once a day
+
