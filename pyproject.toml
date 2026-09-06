@@ -69,7 +69,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-"*" = ["*.yaml"]
+"*" = ["*.yaml", "assets/*.png"]
 
 [tool.setuptools_scm]
 write_to = "src/napari_vizsla/_version.py"

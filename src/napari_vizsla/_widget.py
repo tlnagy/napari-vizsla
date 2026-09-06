@@ -22,6 +22,7 @@ from skimage import measure
 from skimage.io import imread
 
 from .utils import get_successor_tracklets
+from importlib import resources
 
 PIXEL_DRAG_THRESHOLD = 3
 DEBOUNCE_TIME_MS = 2000  # 2 seconds
@@ -110,7 +111,9 @@ class Vizsla(Container):
             value=0, max=0, visible=False, label='Saving...'
         )
 
-        logo = Image(value=imread('assets/vizsla.png'))
+        logopath = resources.files("napari_vizsla.assets").joinpath("vizsla.png")
+        with resources.as_file(logopath) as path:
+            logo = Image(value=imread(path))
         logo.native.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
         logo.native.setMaximumHeight(100)
         logo.native.setMaximumWidth(300)
