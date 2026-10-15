@@ -1,6 +1,5 @@
 import logging
 import warnings
-from collections import defaultdict
 from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -80,8 +79,8 @@ class Vizsla(Container):
         )
         self._autosave_dir_selector.changed.connect(self.update_autosave_dir)
 
-        self._polys = defaultdict(dict)
         self._graph = None
+        self._selected_df = None
 
         self._shape_layer = viewer.add_shapes(
             name='Vizsla',
@@ -163,11 +162,22 @@ class Vizsla(Container):
         self.native.setMaximumWidth(self.native.minimumSizeHint().width())
 
     @thread_worker
-    def graph_loader(self, ctcdir, create_layer=True):
+    def graph_loader(self, ctcdir, create_track_layer=True):
         graph = td.graph.RustWorkXGraph()
-        td.io.from_ctc(ctcdir, graph)
 
-        if create_layer:
+        def contour(regionprop, tolerance=2):
+            c = measure.find_contours(np.pad(regionprop.image, 1))[0] - 1
+            return measure.approximate_polygon(c, tolerance).tolist()
+
+        is_selected = lambda region: False
+        is_selected.__name__ = 'is_selected'
+        td.io.from_ctc(
+            ctcdir,
+            graph,
+            region_props_kwargs={'extra_properties': [contour, is_selected]},
+        )
+
+        if create_track_layer:
             # convert to napari format in background thread
             tracks_coords, tracks_graph = td.functional.to_napari_format(
                 graph, solution_key=None, allow_frame_skip=True
@@ -186,9 +196,9 @@ class Vizsla(Container):
         self._auto_save_progbar.value = 0
         self._auto_save_progbar.label = 'Loading...'
         self.native.layout().invalidate()
-        create_layer = self._tracking_layer_combo.value is None
+        create_track_layer = self._tracking_layer_combo.value is None
         self._load_graph_worker = self.graph_loader(
-            ctcdir, create_layer=create_layer
+            ctcdir, create_track_layer=create_track_layer
         )
 
         def on_finished(res):
@@ -197,7 +207,7 @@ class Vizsla(Container):
             self._auto_save_progbar.visible = False
             self.native.layout().invalidate()
 
-            if create_layer:
+            if create_track_layer:
                 graph, tracks_coords, tracks_graph = res
                 self._graph = graph
                 trks = self._viewer.add_tracks(
@@ -272,31 +282,25 @@ class Vizsla(Container):
         )
         trkid = node.node_attrs('tracklet_id').item()
         nodeid = node.node_attrs('node_id').item()
-        nodes = self._graph.filter(
-            td.NodeAttr('tracklet_id') == trkid
+        nodes = self._graph.filter(td.NodeAttr('tracklet_id') == trkid)
+        nodes_df = nodes.node_attrs()
+
+        self._graph.update_node_attrs(
+            node_ids=nodes.node_ids(), attrs={'is_selected': True}
+        )
+        self._selected_df = self._graph.filter(
+            td.NodeAttr('is_selected') == True
         ).node_attrs()
 
-        for n in nodes.rows(named=True):
-            ymin, xmin, ymax, xmax = n['bbox']
+        curr_node = nodes_df.filter(pl.col('t') == tidx)
+        ymin, xmin, ymax, xmax = curr_node['bbox'].item()
 
-            # remove all labels in the bbox that don't belong to this nucleus
-            region = np.array(
-                np.pad(
-                    seg_layer.data[n['t'], ymin:ymax, xmin:xmax],
-                    pad_width=((1, 1), (2, 2)),
-                    mode='constant',
-                    constant_values=0,
-                )
-            )
-            region[region != n['label']] = 0
-
-            self._polys[trkid][n['t']] = measure.find_contours(region)[0] + (
-                ymin - 1,
-                xmin - 1,
-            )
+        polygon_pts = np.vstack(np.array(curr_node['contour'][0]))
 
         shape_layer.add_polygons(
-            self._polys[trkid][tidx],
+            [
+                polygon_pts + np.array([ymin, xmin])
+            ],  # add offset to polygon points
             edge_width=10,
             edge_color='red',
             face_color='transparent',
@@ -312,8 +316,8 @@ class Vizsla(Container):
             shape_layer.features.index[-1], 'tracklet_id'
         ] = trkid
 
-        prev_verts = nodes.filter(pl.col('t') <= tidx)[:, ['y', 'x']]
-        next_verts = nodes.filter(pl.col('t') >= tidx)[:, ['y', 'x']]
+        prev_verts = nodes_df.filter(pl.col('t') <= tidx)[:, ['y', 'x']]
+        next_verts = nodes_df.filter(pl.col('t') >= tidx)[:, ['y', 'x']]
         tmod = tidx  # this is needed because we might have to transfer one timepoint from prev to next or vice versa
 
         # if this track has more than 3 vertices than we can split them up into prev and future vertices
@@ -389,10 +393,23 @@ class Vizsla(Container):
         shape_data = shape_layer.data.copy()
 
         for i in range(shape_layer.nshapes):
-            if shape_layer.shape_type[i] == 'polygon':
+            if (
+                shape_layer.shape_type[i] == 'polygon'
+                and self._selected_df is not None
+            ):
                 trkid = shape_layer.features.loc[i, 'tracklet_id']
-                if trkid in self._polys and tidx in self._polys[trkid]:
-                    shape_data[i] = self._polys[trkid][tidx]
+                trk_nodes = self._selected_df.filter(
+                    pl.col('tracklet_id') == trkid
+                )
+                if not trk_nodes.is_empty():
+                    # update the polygon vertices to relevant what is stored in the graph for this time point
+                    curr_node = trk_nodes.filter(pl.col('t') == tidx)
+                    if curr_node.is_empty():
+                        continue
+                    ymin, xmin, ymax, xmax = curr_node['bbox'].item()
+                    polygon_pts = np.vstack(np.array(curr_node['contour'][0]))
+                    shape_data[i] = polygon_pts + np.array([ymin, xmin])
+
                     # update the polygon label with actual label info from the segmentation image
                     seg_layer_visible = seg_layer.visible
                     if not seg_layer_visible:
@@ -488,7 +505,13 @@ class Vizsla(Container):
             'tracklet_id': np.array([]),
         }
         self._shape_layer.editable = False
-        self._polys.clear()
+
+        # reset the selection flag for all nodes in the graph
+        self._graph.update_node_attrs(
+            node_ids=self._graph.node_ids(),
+            attrs={'is_selected': False},
+        )
+        self._selected_df = None
 
     def break_track(self, viewer):
         shape_layer = self._shape_layer
