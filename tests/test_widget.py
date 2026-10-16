@@ -25,7 +25,9 @@ def load_vizsla_w_graph(load_vizsla, qtbot):
     v, viewer = load_vizsla
     v._load_ctc_dir.value = 'tests/example_tracks/'
 
-    with qtbot.waitSignal(v._load_graph_worker.finished, timeout=30000): # wait up to 30s
+    with qtbot.waitSignal(
+        v._load_graph_worker.finished, timeout=30000
+    ):  # wait up to 30s
         pass
     return v, viewer
 
@@ -102,5 +104,7 @@ def test_vizsla_link_same_timepoint(load_vizsla_w_graph):
     simulate_click(viewer, v, (7, 1111, 2648))
     simulate_click(viewer, v, (7, 1168, 2756))
 
-    with pytest.warns(UserWarning, match='Cannot link within same timepoint!'):
+    with pytest.warns(
+        UserWarning, match='Cannot link tracklets with overlapping timepoints!'
+    ):
         v.link(viewer)
