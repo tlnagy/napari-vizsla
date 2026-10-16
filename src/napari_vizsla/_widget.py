@@ -1,6 +1,5 @@
 import logging
 import warnings
-from collections import defaultdict
 from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -80,14 +79,12 @@ class Vizsla(Container):
         )
         self._autosave_dir_selector.changed.connect(self.update_autosave_dir)
 
-        self._polys = defaultdict(dict)
         self._graph = None
+        self._selected_df = None
 
         self._shape_layer = viewer.add_shapes(
             name='Vizsla',
             properties={
-                'label': np.array([]),
-                'timepoint': np.array([]),
                 'tracklet_id': np.array([]),
             },
         )
@@ -163,11 +160,22 @@ class Vizsla(Container):
         self.native.setMaximumWidth(self.native.minimumSizeHint().width())
 
     @thread_worker
-    def graph_loader(self, ctcdir, create_layer=True):
+    def graph_loader(self, ctcdir, create_track_layer=True):
         graph = td.graph.RustWorkXGraph()
-        td.io.from_ctc(ctcdir, graph)
 
-        if create_layer:
+        def contour(regionprop, tolerance=2):
+            c = measure.find_contours(np.pad(regionprop.image, 1))[0] - 1
+            return measure.approximate_polygon(c, tolerance).tolist()
+
+        is_selected = lambda region: False
+        is_selected.__name__ = 'is_selected'
+        td.io.from_ctc(
+            ctcdir,
+            graph,
+            region_props_kwargs={'extra_properties': [contour, is_selected]},
+        )
+
+        if create_track_layer:
             # convert to napari format in background thread
             tracks_coords, tracks_graph = td.functional.to_napari_format(
                 graph, solution_key=None, allow_frame_skip=True
@@ -186,9 +194,9 @@ class Vizsla(Container):
         self._auto_save_progbar.value = 0
         self._auto_save_progbar.label = 'Loading...'
         self.native.layout().invalidate()
-        create_layer = self._tracking_layer_combo.value is None
+        create_track_layer = self._tracking_layer_combo.value is None
         self._load_graph_worker = self.graph_loader(
-            ctcdir, create_layer=create_layer
+            ctcdir, create_track_layer=create_track_layer
         )
 
         def on_finished(res):
@@ -197,7 +205,7 @@ class Vizsla(Container):
             self._auto_save_progbar.visible = False
             self.native.layout().invalidate()
 
-            if create_layer:
+            if create_track_layer:
                 graph, tracks_coords, tracks_graph = res
                 self._graph = graph
                 trks = self._viewer.add_tracks(
@@ -272,83 +280,49 @@ class Vizsla(Container):
         )
         trkid = node.node_attrs('tracklet_id').item()
         nodeid = node.node_attrs('node_id').item()
-        nodes = self._graph.filter(
-            td.NodeAttr('tracklet_id') == trkid
+        nodes = self._graph.filter(td.NodeAttr('tracklet_id') == trkid)
+        nodes_df = nodes.node_attrs()
+
+        self._graph.update_node_attrs(
+            node_ids=nodes.node_ids(), attrs={'is_selected': True}
+        )
+        self._selected_df = self._graph.filter(
+            td.NodeAttr('is_selected') == True
         ).node_attrs()
 
-        for n in nodes.rows(named=True):
-            ymin, xmin, ymax, xmax = n['bbox']
+        curr_node = nodes_df.filter(pl.col('t') == tidx)
+        ymin, xmin, ymax, xmax = curr_node['bbox'].item()
 
-            # remove all labels in the bbox that don't belong to this nucleus
-            region = np.array(
-                np.pad(
-                    seg_layer.data[n['t'], ymin:ymax, xmin:xmax],
-                    pad_width=((1, 1), (2, 2)),
-                    mode='constant',
-                    constant_values=0,
-                )
-            )
-            region[region != n['label']] = 0
-
-            self._polys[trkid][n['t']] = measure.find_contours(region)[0] + (
-                ymin - 1,
-                xmin - 1,
-            )
+        polygon_pts = np.vstack(np.array(curr_node['contour'][0]))
 
         shape_layer.add_polygons(
-            self._polys[trkid][tidx],
+            [
+                polygon_pts + np.array([ymin, xmin])
+            ],  # add offset to polygon points
             edge_width=10,
             edge_color='red',
             face_color='transparent',
             z_index=1,
         )
-        shape_layer.features.loc[shape_layer.features.index[-1], 'label'] = (
-            label
-        )
-        shape_layer.features.loc[
-            shape_layer.features.index[-1], 'timepoint'
-        ] = tidx
         shape_layer.features.loc[
             shape_layer.features.index[-1], 'tracklet_id'
         ] = trkid
 
-        prev_verts = nodes.filter(pl.col('t') <= tidx)[:, ['y', 'x']]
-        next_verts = nodes.filter(pl.col('t') >= tidx)[:, ['y', 'x']]
-        tmod = tidx  # this is needed because we might have to transfer one timepoint from prev to next or vice versa
+        trk_nodes = self._selected_df.filter(pl.col('tracklet_id') == trkid)
+        prev_verts = trk_nodes.filter(pl.col('t') <= tidx)[:, ['y', 'x']]
+        next_verts = trk_nodes.filter(pl.col('t') >= tidx)[:, ['y', 'x']]
 
-        # if this track has more than 3 vertices than we can split them up into prev and future vertices
-        # so that we can have nicely highlighted tracks.
-        if prev_verts.shape[0] + next_verts.shape[0] >= 3:
-            if prev_verts.shape[0] < 2:
-                prev_verts = pl.concat((prev_verts, next_verts[1, :]))
-                next_verts = next_verts[1:, :]
-                tmod += 1
+        if prev_verts.height > 1:
             shape_layer.add_paths(
                 prev_verts.to_numpy(), edge_color='white', edge_width=4
             )
             shape_layer.features.loc[
-                shape_layer.features.index[-1], 'label'
-            ] = label
-            shape_layer.features.loc[
-                shape_layer.features.index[-1], 'timepoint'
-            ] = tmod
-            shape_layer.features.loc[
                 shape_layer.features.index[-1], 'tracklet_id'
             ] = trkid
-
-            if next_verts.shape[0] < 2:
-                next_verts = pl.concat((prev_verts[-2, :], next_verts))
-                prev_verts = prev_verts[:-1, :]
-                tmod -= 1
+        if next_verts.height > 1:
             shape_layer.add_paths(
                 next_verts.to_numpy()[::-1, :], edge_color='gray', edge_width=4
             )
-            shape_layer.features.loc[
-                shape_layer.features.index[-1], 'label'
-            ] = label
-            shape_layer.features.loc[
-                shape_layer.features.index[-1], 'timepoint'
-            ] = tmod - 1
             shape_layer.features.loc[
                 shape_layer.features.index[-1], 'tracklet_id'
             ] = trkid
@@ -384,65 +358,96 @@ class Vizsla(Container):
             )
             return
         tidx = self._viewer.dims.current_step[-3]
-        seg_layer = self._seg_layer_combo.value
 
-        shape_data = shape_layer.data.copy()
-
-        for i in range(shape_layer.nshapes):
-            if shape_layer.shape_type[i] == 'polygon':
-                trkid = shape_layer.features.loc[i, 'tracklet_id']
-                if trkid in self._polys and tidx in self._polys[trkid]:
-                    shape_data[i] = self._polys[trkid][tidx]
-                    # update the polygon label with actual label info from the segmentation image
-                    seg_layer_visible = seg_layer.visible
-                    if not seg_layer_visible:
-                        seg_layer.visible = True
-                    label = seg_layer.get_value(
-                        [tidx] + np.mean(shape_data[i], axis=0).tolist()
-                    )
-                    seg_layer.visible = seg_layer_visible
-                    shape_layer.features.loc[i, 'timepoint'] = tidx
-                    shape_layer.features.loc[i, 'label'] = label
-                # c = df.loc[i, "edge_color"]
-                c = shape_layer.edge_color[i]
-                shape_layer.selected_data = {i}
-                if shape_layer.features.loc[i, 'timepoint'] == tidx:
-                    c[0] = 1.0
-                else:
-                    c[0] = 0.5
-                shape_layer.current_edge_color = c
-                shape_layer.selected_data = {}
-
+        data = shape_layer.data.copy()
         df = shape_layer.features.copy()
         df['shape_type'] = shape_layer.shape_type
         df['shape_index'] = range(shape_layer.nshapes)
-        df['timepoint'] = tidx - df['timepoint']
-        tracklet_groups = df[df['shape_type'] == 'path'].groupby('tracklet_id')
+        df['edge_color'] = np.unstack(shape_layer.edge_color)
+        df['face_color'] = np.unstack(shape_layer.face_color)
+        df['edge_width'] = shape_layer.edge_width
 
-        for trkid, group_df in tracklet_groups:
-            group_df.sort_values(by='timepoint', inplace=True)
-            if group_df.shape[0] != 2:
-                break
-            to_transfer = int(group_df['timepoint'].iloc[0])
-            if to_transfer == 0.0:
-                break  # nothing to do
-            elif to_transfer < 0.0:
-                src, dst = group_df['shape_index']
-            else:
-                dst, src = group_df['shape_index']
-            if shape_data[src].shape[0] - abs(to_transfer) < 2:
-                break
-            # vertices to transfer from src to dst only if this time point exists for this track
-            if trkid in self._polys and tidx in self._polys[trkid]:
-                transfer = shape_data[src][
-                    -2 : (-1 * (abs(to_transfer) + 2)) : -1
-                ]
-                shape_data[dst] = np.vstack((shape_data[dst], transfer))
-                shape_data[src] = shape_data[src][: -1 * abs(to_transfer)]
-            shape_layer.features.loc[dst, 'timepoint'] += to_transfer
-            shape_layer.features.loc[src, 'timepoint'] += to_transfer
+        # create a list of tracklet ids that are being updated
+        tracklet_ids_needing_update = []
+        i = 0
+        while i < len(data):
+            if (
+                df.loc[i, 'shape_type'] == 'polygon'
+                and self._selected_df is not None
+            ):
+                trkid = shape_layer.features.loc[i, 'tracklet_id']
+                trk_nodes = self._selected_df.filter(
+                    pl.col('tracklet_id') == trkid
+                )
+                if not trk_nodes.is_empty():
+                    # update the polygon vertices to relevant what is stored in the graph for this time point
+                    curr_node = trk_nodes.filter(pl.col('t') == tidx)
 
-        shape_layer.data = shape_data
+                    # if the current time point doesn't exist for this track, we don't update
+                    if curr_node.is_empty():
+                        c = df.loc[i, 'edge_color']
+                        df.loc[i, 'edge_color'][:] = np.array(
+                            [0.5, c[1], c[2], c[3]]
+                        )
+                        i += 1
+                        continue
+                    ymin, xmin, ymax, xmax = curr_node['bbox'].item()
+                    polygon_pts = np.vstack(np.array(curr_node['contour'][0]))
+                    data[i] = polygon_pts + np.array([ymin, xmin])
+
+                    c = df.loc[i, 'edge_color']
+                    df.loc[i, 'edge_color'][:] = np.array(
+                        [1.0, c[1], c[2], c[3]]
+                    )
+                    tracklet_ids_needing_update.append(trkid)
+            # if there are paths associated with this tracklet, we remove them
+            elif (
+                df.loc[i, 'shape_type'] == 'path'
+                and df.loc[i, 'tracklet_id'] in tracklet_ids_needing_update
+            ):
+                data.pop(i)
+                df.drop(i, inplace=True)
+                df.reset_index(drop=True, inplace=True)
+                continue
+
+            i += 1
+
+        shape_layer.data = data
+        shape_layer.features = df
+        try:
+            shape_layer.shape_type = df['shape_type'].to_list()
+            shape_layer.edge_color = np.vstack(df['edge_color'])
+            shape_layer.face_color = np.vstack(df['face_color'])
+            shape_layer.edge_width = df['edge_width'].to_list()
+        except ValueError as e:
+            pass
+        shape_layer.refresh()
+
+        # re-add the paths for the updated tracklets
+        for trkid in tracklet_ids_needing_update:
+            trk_nodes = self._selected_df.filter(
+                pl.col('tracklet_id') == trkid
+            )
+            prev_verts = trk_nodes.filter(pl.col('t') <= tidx)[:, ['y', 'x']]
+            next_verts = trk_nodes.filter(pl.col('t') >= tidx)[:, ['y', 'x']]
+
+            if prev_verts.height > 1:
+                shape_layer.add_paths(
+                    prev_verts.to_numpy(), edge_color='white', edge_width=4
+                )
+                shape_layer.features.loc[
+                    shape_layer.features.index[-1], 'tracklet_id'
+                ] = trkid
+            if next_verts.height > 1:
+                shape_layer.add_paths(
+                    next_verts.to_numpy()[::-1, :],
+                    edge_color='gray',
+                    edge_width=4,
+                )
+                shape_layer.features.loc[
+                    shape_layer.features.index[-1], 'tracklet_id'
+                ] = trkid
+
         shape_layer.editable = False
         shape_layer.refresh()
 
@@ -460,49 +465,45 @@ class Vizsla(Container):
 
     def hide_polys(self, viewer):
         shape_layer = self._shape_layer
+        colors = shape_layer.edge_color.copy()
         for i in range(shape_layer.nshapes):
             if shape_layer.shape_type[i] == 'polygon':
-                shape_layer.selected_data = {i}
-                c = shape_layer.edge_color[i].copy()
+                c = colors[i]
                 if c[3] == 1.0:
                     c[3] = 0.0
                 else:
                     c[3] = 1.0
-                shape_layer.current_edge_color = c
-                shape_layer.selected_data = {}
+                colors[i][:] = c
             elif shape_layer.shape_type[i] == 'path':
-                shape_layer.selected_data = {i}
-                c = shape_layer.edge_color[i].copy()
+                c = colors[i]
                 if c[3] == 1.0:
                     c[3] = 0.3
                 else:
                     c[3] = 1.0
-                shape_layer.current_edge_color = c
-                shape_layer.selected_data = {}
+                colors[i][:] = c
+        shape_layer.edge_color = colors
+        shape_layer.refresh()
 
     def _reset_shape_layer(self):
         self._shape_layer.data = []
         self._shape_layer.properties = {
-            'label': np.array([]),
-            'timepoint': np.array([]),
             'tracklet_id': np.array([]),
         }
         self._shape_layer.editable = False
-        self._polys.clear()
+
+        # reset the selection flag for all nodes in the graph
+        self._graph.update_node_attrs(
+            node_ids=self._graph.node_ids(),
+            attrs={'is_selected': False},
+        )
+        self._selected_df = None
 
     def break_track(self, viewer):
-        shape_layer = self._shape_layer
-        selected = [
-            i for (i, p) in enumerate(shape_layer.shape_type) if p == 'polygon'
-        ]
-        if len(selected) != 1:
+        tidx = self._viewer.dims.current_step[-3]
+        if self._selected_df['tracklet_id'].n_unique() > 1:
             warnings.warn('Select only one label to break track', stacklevel=2)
             return
-        timepoints = shape_layer.features['timepoint'][selected].to_numpy()[0]
-        labels = shape_layer.features['label'][selected].to_numpy()[0]
-        src = self._graph.filter(
-            (td.NodeAttr('t') == timepoints) & (td.NodeAttr('label') == labels)
-        ).node_ids()[0]
+        src = self._selected_df.filter(pl.col('t') == tidx)['node_id'].item()
         for succ in self._graph.successors(src):
             self._graph.remove_edge(src, succ)
 
@@ -515,46 +516,30 @@ class Vizsla(Container):
         self._reset_shape_layer()
 
     def link(self, viewer):
-        shape_layer = self._shape_layer
-        selected = [
-            i for (i, p) in enumerate(shape_layer.shape_type) if p == 'polygon'
-        ]
-        timepoints = shape_layer.features['timepoint'][selected].to_numpy()
-        labels = shape_layer.features['label'][selected].to_numpy()
-
-        if len(selected) > 3:
+        df = self._selected_df
+        if df['t'].n_unique() < df.height:
+            warnings.warn(
+                'Cannot link tracklets with overlapping timepoints!',
+                stacklevel=2,
+            )
+            return
+        if df['tracklet_id'].n_unique() > 2:
             warnings.warn('>3 way links are not supported!', stacklevel=2)
             return
-        if len(np.unique(timepoints)) < 2:
-            warnings.warn('Cannot link within same timepoint!', stacklevel=2)
-            return
-        values, counts = np.unique_counts(timepoints)
-        if counts[np.argmin(values)] != 1:
-            warnings.warn('Cannot merge tracklets!', stacklevel=2)
-            return
 
-        for child in np.where(timepoints != np.min(timepoints))[0]:
-            src = self._graph.filter(
-                (td.NodeAttr('t') == np.min(timepoints))
-                & (td.NodeAttr('label') == labels[np.argmin(timepoints)])
-            ).node_ids()[0]
-            dst = self._graph.filter(
-                (td.NodeAttr('t') == timepoints[child])
-                & (td.NodeAttr('label') == labels[child])
-            ).node_ids()[0]
+        idx = df.with_row_index().filter(pl.col('tracklet_id').diff() != 0)[
+            'index'
+        ][0]
 
-            for pred in self._graph.predecessors(dst):
-                self._graph.remove_edge(pred, dst)
+        self._graph.add_edge(df[idx - 1, 'node_id'], df[idx, 'node_id'], {})
 
-            self._graph.add_edge(src, dst, {})
+        tracks_coords, tracks_graph = td.functional.to_napari_format(
+            self._graph, solution_key=None, allow_frame_skip=True
+        )
+        self._tracking_layer_combo.value.data = tracks_coords
+        self._tracking_layer_combo.value.refresh()
 
-            tracks_coords, tracks_graph = td.functional.to_napari_format(
-                self._graph, solution_key=None, allow_frame_skip=True
-            )
-            self._tracking_layer_combo.value.data = tracks_coords
-            self._tracking_layer_combo.value.refresh()
-
-            self._reset_shape_layer()
+        self._reset_shape_layer()
 
     def update_autosave_dir(self):
         self.autosave_dir = self._autosave_dir_selector.value
