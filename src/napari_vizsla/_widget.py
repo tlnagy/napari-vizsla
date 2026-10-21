@@ -86,6 +86,7 @@ class Vizsla(Container):
             name='Vizsla',
             properties={
                 'tracklet_id': np.array([]),
+                'verts': np.array([], dtype=str),
             },
         )
         self._shape_layer.opacity = 1.0
@@ -307,6 +308,7 @@ class Vizsla(Container):
         shape_layer.features.loc[
             shape_layer.features.index[-1], 'tracklet_id'
         ] = trkid
+        shape_layer.features.loc[shape_layer.features.index[-1], 'verts'] = ''
 
         trk_nodes = self._selected_df.filter(pl.col('tracklet_id') == trkid)
         prev_verts = trk_nodes.filter(pl.col('t') <= tidx)[:, ['y', 'x']]
@@ -316,16 +318,31 @@ class Vizsla(Container):
             shape_layer.add_paths(
                 prev_verts.to_numpy(), edge_color='white', edge_width=4
             )
-            shape_layer.features.loc[
-                shape_layer.features.index[-1], 'tracklet_id'
-            ] = trkid
+        else:
+            shape_layer.add_paths(
+                np.array([[0, 0], [0, 0]]), edge_color='white', edge_width=4
+            )
+        shape_layer.features.loc[
+            shape_layer.features.index[-1], 'tracklet_id'
+        ] = trkid
+        shape_layer.features.loc[shape_layer.features.index[-1], 'verts'] = (
+            'prev'
+        )
+
         if next_verts.height > 1:
             shape_layer.add_paths(
                 next_verts.to_numpy()[::-1, :], edge_color='gray', edge_width=4
             )
-            shape_layer.features.loc[
-                shape_layer.features.index[-1], 'tracklet_id'
-            ] = trkid
+        else:
+            shape_layer.add_paths(
+                np.array([[0, 0], [0, 0]]), edge_color='gray', edge_width=4
+            )
+        shape_layer.features.loc[
+            shape_layer.features.index[-1], 'tracklet_id'
+        ] = trkid
+        shape_layer.features.loc[shape_layer.features.index[-1], 'verts'] = (
+            'next'
+        )
 
         for track in get_successor_tracklets(self._graph, nodeid):
             sucverts = self._graph.filter(
@@ -351,6 +368,11 @@ class Vizsla(Container):
 
     def on_time_change(self):
         shape_layer = self._shape_layer
+
+        # if no segments are selected, no updates are needed
+        if self._selected_df is None:
+            return
+
         if len(self._viewer.dims.current_step) < 3:
             warnings.warn(
                 'Vizsla requires a 3D or higher dimension image to function.',
@@ -367,14 +389,8 @@ class Vizsla(Container):
         df['face_color'] = np.unstack(shape_layer.face_color)
         df['edge_width'] = shape_layer.edge_width
 
-        # create a list of tracklet ids that are being updated
-        tracklet_ids_needing_update = []
-        i = 0
-        while i < len(data):
-            if (
-                df.loc[i, 'shape_type'] == 'polygon'
-                and self._selected_df is not None
-            ):
+        for i in range(shape_layer.nshapes):
+            if df.loc[i, 'shape_type'] == 'polygon':
                 trkid = shape_layer.features.loc[i, 'tracklet_id']
                 trk_nodes = self._selected_df.filter(
                     pl.col('tracklet_id') == trkid
@@ -389,7 +405,6 @@ class Vizsla(Container):
                         df.loc[i, 'edge_color'][:] = np.array(
                             [0.5, c[1], c[2], c[3]]
                         )
-                        i += 1
                         continue
                     ymin, xmin, ymax, xmax = curr_node['bbox'].item()
                     polygon_pts = np.vstack(np.array(curr_node['contour'][0]))
@@ -399,18 +414,29 @@ class Vizsla(Container):
                     df.loc[i, 'edge_color'][:] = np.array(
                         [1.0, c[1], c[2], c[3]]
                     )
-                    tracklet_ids_needing_update.append(trkid)
-            # if there are paths associated with this tracklet, we remove them
-            elif (
-                df.loc[i, 'shape_type'] == 'path'
-                and df.loc[i, 'tracklet_id'] in tracklet_ids_needing_update
-            ):
-                data.pop(i)
-                df.drop(i, inplace=True)
-                df.reset_index(drop=True, inplace=True)
-                continue
 
-            i += 1
+            elif df.loc[i, 'shape_type'] == 'path':
+                trkid = shape_layer.features.loc[i, 'tracklet_id']
+
+                trk_nodes = self._selected_df.filter(
+                    pl.col('tracklet_id') == trkid
+                )
+                if df.loc[i, 'verts'] == 'prev':
+                    prev_verts = trk_nodes.filter(pl.col('t') <= tidx)[
+                        :, ['y', 'x']
+                    ]
+                    if prev_verts.height > 1:
+                        data[i] = prev_verts.to_numpy()
+                    else:
+                        data[i] = np.array([[0, 0], [0, 0]])
+                elif df.loc[i, 'verts'] == 'next':
+                    next_verts = trk_nodes.filter(pl.col('t') >= tidx)[
+                        :, ['y', 'x']
+                    ]
+                    if next_verts.height > 1:
+                        data[i] = next_verts.to_numpy()[::-1, :]
+                    else:
+                        data[i] = np.array([[0, 0], [0, 0]])
 
         shape_layer.data = data
         shape_layer.features = df
@@ -419,34 +445,9 @@ class Vizsla(Container):
             shape_layer.edge_color = np.vstack(df['edge_color'])
             shape_layer.face_color = np.vstack(df['face_color'])
             shape_layer.edge_width = df['edge_width'].to_list()
-        except ValueError as e:
+        except ValueError:
             pass
         shape_layer.refresh()
-
-        # re-add the paths for the updated tracklets
-        for trkid in tracklet_ids_needing_update:
-            trk_nodes = self._selected_df.filter(
-                pl.col('tracklet_id') == trkid
-            )
-            prev_verts = trk_nodes.filter(pl.col('t') <= tidx)[:, ['y', 'x']]
-            next_verts = trk_nodes.filter(pl.col('t') >= tidx)[:, ['y', 'x']]
-
-            if prev_verts.height > 1:
-                shape_layer.add_paths(
-                    prev_verts.to_numpy(), edge_color='white', edge_width=4
-                )
-                shape_layer.features.loc[
-                    shape_layer.features.index[-1], 'tracklet_id'
-                ] = trkid
-            if next_verts.height > 1:
-                shape_layer.add_paths(
-                    next_verts.to_numpy()[::-1, :],
-                    edge_color='gray',
-                    edge_width=4,
-                )
-                shape_layer.features.loc[
-                    shape_layer.features.index[-1], 'tracklet_id'
-                ] = trkid
 
         shape_layer.editable = False
         shape_layer.refresh()
@@ -488,6 +489,7 @@ class Vizsla(Container):
         self._shape_layer.data = []
         self._shape_layer.properties = {
             'tracklet_id': np.array([]),
+            'verts': np.array([], dtype=str),
         }
         self._shape_layer.editable = False
 
