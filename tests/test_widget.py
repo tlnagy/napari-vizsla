@@ -108,3 +108,16 @@ def test_vizsla_link_same_timepoint(load_vizsla_w_graph):
         UserWarning, match='Cannot link tracklets with overlapping timepoints!'
     ):
         v.link(viewer)
+
+
+def test_vizsla_link_complex(load_vizsla_w_graph):
+    v, viewer = load_vizsla_w_graph
+
+    simulate_click(viewer, v, (22, 1474, 1632))
+    simulate_click(viewer, v, (23, 1423, 1674))
+
+    with pytest.warns(
+        UserWarning,
+        match='Cannot link tracklets, as the first tracklet has children already!',
+    ):
+        v.link(viewer)

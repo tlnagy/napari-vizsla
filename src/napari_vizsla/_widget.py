@@ -533,6 +533,20 @@ class Vizsla(Container):
             'index'
         ][0]
 
+        if len(self._graph.successors(df[idx - 1, 'node_id'])) > 0:
+            warnings.warn(
+                'Cannot link tracklets, as the first tracklet has children already!',
+                stacklevel=2,
+            )
+            return
+
+        if len(self._graph.predecessors(df[idx, 'node_id'])) > 0:
+            warnings.warn(
+                'Cannot link tracklets, as the second tracklet has a parent already!',
+                stacklevel=2,
+            )
+            return
+
         self._graph.add_edge(df[idx - 1, 'node_id'], df[idx, 'node_id'], {})
 
         tracks_coords, tracks_graph = td.functional.to_napari_format(
